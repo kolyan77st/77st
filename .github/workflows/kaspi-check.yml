@@ -2,7 +2,7 @@ name: Kaspi Checker
 
 on:
   schedule:
-    - cron: "0 4,17 * * *"
+    - cron: "0 5,15 * * *"
   workflow_dispatch:
 
 jobs:
