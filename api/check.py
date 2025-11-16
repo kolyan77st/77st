@@ -80,7 +80,7 @@ def handler():
         except Exception as e:
             print(f"[handler] Ошибка парсинга HTML: {e}")
 
-        available = any(x in availability_text for x in ["в наличии", "есть", "доступно"])
+        available = any(x in availability_text for x in ["в наличии", "есть", "выбрать"])
         was_available = read_log()
 
         email_result = None
