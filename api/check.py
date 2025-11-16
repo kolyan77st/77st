@@ -53,7 +53,7 @@ def send_email(product_url, availability_text):
 # --- Основная логика ---
 def check_availability():
     try:
-        product_url = "https://kaspi.kz/shop/p/ehrmann-puding-vanil-bezlaktoznyi-1-5-200-g-102110634"
+        product_url = "https://kaspi.kz/shop/p/ehrmann-slivki-10-100-ml-100230406/?c=750000000"
         SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY")
         if not SCRAPER_API_KEY:
             return {"error": "SCRAPER_API_KEY не задан!"}
