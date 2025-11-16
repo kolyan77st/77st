@@ -3,41 +3,23 @@ import json
 from http.server import BaseHTTPRequestHandler
 import requests
 from bs4 import BeautifulSoup
-import smtplib
 from email.mime.text import MIMEText
+import smtplib
 
-LOG_FILE = "/tmp/was_available.txt"
 
-# --- Работа с логом ---
-def read_log() -> bool:
-    try:
-        with open(LOG_FILE, "r") as f:
-            return f.read().strip().lower() == "true"
-    except FileNotFoundError:
-        return False
-    except Exception as e:
-        print(f"[read_log] Ошибка: {e}")
-        return False
+PRODUCT_URL = "https://kaspi.kz/shop/p/ehrmann-puding-vanil-bezlaktoznyi-1-5-200-g-102110634/?c=750000000"
 
-def write_log(value: bool):
-    try:
-        with open(LOG_FILE, "w") as f:
-            f.write("true" if value else "false")
-    except Exception as e:
-        print(f"[write_log] Ошибка: {e}")
 
-# --- Отправка email ---
-def send_email(product_url, availability_text):
+def send_email(status_text):
     EMAIL_FROM = os.environ.get("EMAIL_FROM")
     EMAIL_TO = os.environ.get("EMAIL_TO")
     EMAIL_PASS = os.environ.get("EMAIL_PASS")
 
     if not EMAIL_FROM or not EMAIL_TO or not EMAIL_PASS:
-        print("[send_email] Email переменные не заданы")
-        return {"email_error": "Email переменные не заданы"}
+        return {"email": "Email переменные окружения не заданы"}
 
-    msg = MIMEText(f"Товар появился на Kaspi!\nСтатус: {availability_text}\nСсылка: {product_url}")
-    msg["Subject"] = "🔔 Kaspi Checker: Товар в наличии!"
+    msg = MIMEText(f"Товар появился!\n\nСтатус: {status_text}\n\nСсылка: {PRODUCT_URL}")
+    msg["Subject"] = "Kaspi Checker: Товар в наличии!"
     msg["From"] = EMAIL_FROM
     msg["To"] = EMAIL_TO
 
@@ -45,74 +27,80 @@ def send_email(product_url, availability_text):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(EMAIL_FROM, EMAIL_PASS)
             server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
-        print("[send_email] Email отправлен")
+        return {"email": "sent"}
     except Exception as e:
-        print(f"[send_email] Ошибка при отправке email: {e}")
         return {"email_error": str(e)}
 
-# --- Основная логика ---
-def check_availability():
-    try:
-        product_url = "https://kaspi.kz/shop/p/ehrmann-slivki-10-100-ml-100230406/?c=750000000"
-        SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY")
-        if not SCRAPER_API_KEY:
-            return {"error": "SCRAPER_API_KEY не задан!"}
 
-        # ScraperAPI с рендерингом JS
-        scraper_url = f"https://api.scraperapi.com/?api_key={SCRAPER_API_KEY}&render=true&url={product_url}"
+def parse_kaspi(html):
+    soup = BeautifulSoup(html, "html.parser")
 
+    # === Проверка meta-тега (самый правильный вариант) ===
+    meta = soup.find("meta", {"property": "product:availability"})
+    if meta:
+        content = meta.get("content", "").lower()
+        if content == "in stock":
+            return True, "in stock"
+        return False, content
+
+    # === Проверка JSON-LD ===
+    for script in soup.find_all("script", {"type": "application/ld+json"}):
         try:
-            r = requests.get(scraper_url, timeout=20)
-            r.raise_for_status()
-            soup = BeautifulSoup(r.text, "html.parser")
-        except Exception as e:
-            return {"error": f"Ошибка ScraperAPI: {str(e)}"}
+            data = json.loads(script.string.strip())
+            if isinstance(data, dict) and data.get("@type") == "Product":
+                offers = data.get("offers", [])
+                if isinstance(offers, dict):
+                    offers = [offers]
 
-        # --- Парсинг наличия товара ---
-        availability_text = ""
-        available = False
+                for o in offers:
+                    avail = o.get("availability", "").lower()
+                    if "instock" in avail:
+                        return True, "in stock"
+                    if "outofstock" in avail:
+                        return False, "out of stock"
+        except:
+            pass
 
-        el = soup.select_one(".sellers-table__in-stock")
-        if el:
-            availability_text = el.get_text(strip=True).lower()
-            available = any(word in availability_text for word in ["в наличии", "есть", "выбрать"])
-        else:
-            availability_text = "Статус товара не найден"
+    # === Проверка window.digitalData ===
+    for script in soup.find_all("script"):
+        if script.string and "digitalData" in script.string:
+            if '"stock":0' in script.string:
+                return False, "stock: 0"
+            if '"stock":' in script.string:
+                return True, "stock > 0"
 
-        was_available = read_log()
+    return False, "no availability info"
 
-        email_result = None
-        if available and not was_available:
-            email_result = send_email(product_url, availability_text)
-            write_log(True)
-        elif not available and was_available:
-            write_log(False)
 
-        return {
-            "available": available,
-            "was_available": was_available,
-            "statusText": availability_text,
-            "email_result": email_result
-        }
+def check():
+    SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY")
+    if not SCRAPER_API_KEY:
+        return {"error": "SCRAPER_API_KEY не задан"}
 
+    scraper_url = f"https://api.scraperapi.com/?api_key={SCRAPER_API_KEY}&render=true&url={PRODUCT_URL}"
+
+    try:
+        r = requests.get(scraper_url, timeout=25)
+        r.raise_for_status()
     except Exception as e:
-        return {"error": f"Unexpected error: {str(e)}"}
+        return {"error": f"ScraperAPI error: {str(e)}"}
 
-# --- Vercel Serverless Handler ---
+    available, status_text = parse_kaspi(r.text)
+
+    if available:
+        send_email(status_text)
+
+    return {
+        "available": available,
+        "status": status_text,
+        "product": PRODUCT_URL,
+    }
+
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        try:
-            result = check_availability()
-
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.end_headers()
-
-            self.wfile.write(json.dumps(result, ensure_ascii=False).encode('utf-8'))
-
-        except Exception as e:
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json; charset=utf-8')
-            self.end_headers()
-
-            self.wfile.write(json.dumps({"error": str(e)}, ensure_ascii=False).encode('utf-8'))
+        result = check()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(json.dumps(result, ensure_ascii=False).encode("utf-8"))
