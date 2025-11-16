@@ -7,6 +7,7 @@ from fastapi import FastAPI
 
 LOG_FILE = "/tmp/was_available.txt"
 
+# --- Работа с логом ---
 def read_log() -> bool:
     try:
         with open(LOG_FILE, "r") as f:
@@ -14,7 +15,7 @@ def read_log() -> bool:
     except FileNotFoundError:
         return False
     except Exception as e:
-        print(f"[read_log] Ошибка чтения файла: {e}")
+        print(f"[read_log] Ошибка: {e}")
         return False
 
 def write_log(value: bool):
@@ -22,16 +23,17 @@ def write_log(value: bool):
         with open(LOG_FILE, "w") as f:
             f.write("true" if value else "false")
     except Exception as e:
-        print(f"[write_log] Ошибка записи файла: {e}")
+        print(f"[write_log] Ошибка: {e}")
 
+# --- Отправка email ---
 def send_email(product_url):
     EMAIL_FROM = os.environ.get("EMAIL_FROM")
     EMAIL_TO = os.environ.get("EMAIL_TO")
     EMAIL_PASS = os.environ.get("EMAIL_PASS")
 
     if not EMAIL_FROM or not EMAIL_TO or not EMAIL_PASS:
-        print("[send_email] Email переменные окружения не заданы!")
-        return {"email_error": "Email переменные окружения не заданы"}
+        print("[send_email] Email переменные не заданы")
+        return {"email_error": "Email переменные не заданы"}
 
     msg = MIMEText(f"Товар появился на Kaspi:\n{product_url}")
     msg["Subject"] = "Kaspi Checker: Товар в наличии!"
@@ -44,9 +46,10 @@ def send_email(product_url):
             server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
         print("[send_email] Email отправлен")
     except Exception as e:
-        print(f"[send_email] Ошибка при отправке email: {e}")
+        print(f"[send_email] Ошибка: {e}")
         return {"email_error": str(e)}
 
+# --- Основная логика ---
 def handler():
     try:
         product_url = "https://kaspi.kz/shop/p/ehrmann-puding-vanil-bezlaktoznyi-1-5-200-g-102110634/?c=750000000"
@@ -56,14 +59,15 @@ def handler():
 
         scraper_url = f"https://api.scraperapi.com/?api_key={SCRAPER_API_KEY}&url={product_url}"
 
+        # --- Запрос к ScraperAPI ---
         try:
             r = requests.get(scraper_url, timeout=15)
             r.raise_for_status()
             soup = BeautifulSoup(r.text, "html.parser")
         except Exception as e:
-            return {"error": f"Ошибка при запросе ScraperAPI: {str(e)}"}
+            return {"error": f"Ошибка ScraperAPI: {str(e)}"}
 
-        # Парсинг наличия
+        # --- Парсинг наличия товара ---
         availability_text = ""
         try:
             el = soup.select_one("div.product__header .status")
@@ -96,7 +100,7 @@ def handler():
     except Exception as e:
         return {"error": f"Unexpected error in handler: {str(e)}"}
 
-# FastAPI
+# --- FastAPI ---
 app = FastAPI()
 
 @app.get("/api/check")
