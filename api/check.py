@@ -7,39 +7,63 @@ from fastapi import FastAPI
 
 LOG_FILE = "/tmp/was_available.txt"
 
-def read_log():
+def read_log() -> bool:
+    """Читает состояние наличия товара из файла."""
     try:
         with open(LOG_FILE, "r") as f:
-            return f.read().strip() == "true"
-    except:
+            value = f.read().strip().lower()
+            return value == "true"
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        print(f"Ошибка чтения файла {LOG_FILE}: {e}")
         return False
 
 def write_log(value: bool):
-    with open(LOG_FILE, "w") as f:
-        f.write("true" if value else "false")
+    """Записывает состояние наличия товара в файл."""
+    try:
+        with open(LOG_FILE, "w") as f:
+            f.write("true" if value else "false")
+    except Exception as e:
+        print(f"Ошибка записи файла {LOG_FILE}: {e}")
 
 def send_email(product_url):
     EMAIL_FROM = os.environ.get("EMAIL_FROM")
     EMAIL_TO = os.environ.get("EMAIL_TO")
     EMAIL_PASS = os.environ.get("EMAIL_PASS")
 
+    if not EMAIL_FROM or not EMAIL_TO or not EMAIL_PASS:
+        print("Email переменные окружения не заданы!")
+        return
+
     msg = MIMEText(f"Товар появился на Kaspi:\n{product_url}")
     msg["Subject"] = "Kaspi Checker: Товар в наличии!"
     msg["From"] = EMAIL_FROM
     msg["To"] = EMAIL_TO
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(EMAIL_FROM, EMAIL_PASS)
-        server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(EMAIL_FROM, EMAIL_PASS)
+            server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+        print("Email отправлен!")
+    except Exception as e:
+        print(f"Ошибка при отправке email: {e}")
 
 def handler():
     product_url = "https://kaspi.kz/shop/p/ehrmann-puding-vanil-bezlaktoznyi-1-5-200-g-102110634/?c=750000000"
     SCRAPER_API_KEY = os.environ.get("SCRAPER_API_KEY")
 
+    if not SCRAPER_API_KEY:
+        return {"error": "SCRAPER_API_KEY не задан!"}
+
     scraper_url = f"https://api.scraperapi.com/?api_key={SCRAPER_API_KEY}&url={product_url}"
 
-    r = requests.get(scraper_url)
-    soup = BeautifulSoup(r.text, "html.parser")
+    try:
+        r = requests.get(scraper_url, timeout=15)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+    except Exception as e:
+        return {"error": f"Ошибка при запросе: {e}"}
 
     # Парсим наличие товара
     availability_text = ""
@@ -52,7 +76,6 @@ def handler():
             availability_text = el2.get_text(strip=True).lower()
 
     available = any(x in availability_text for x in ["в наличии", "есть", "доступно"])
-
     was_available = read_log()
 
     if available and not was_available:
@@ -71,4 +94,5 @@ app = FastAPI()
 
 @app.get("/api/check")
 def check_api():
+    """Эндпоинт для проверки наличия товара на Kaspi."""
     return handler()
