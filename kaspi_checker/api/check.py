@@ -3,12 +3,21 @@ import requests
 from bs4 import BeautifulSoup
 import smtplib
 from email.mime.text import MIMEText
-from vercel_kv import KV
 from fastapi import FastAPI
 
-# KV клиент
-KV_NAMESPACE = os.environ.get("KV_NAMESPACE")
-kv = KV(namespace=KV_NAMESPACE)
+# Файл для лога
+LOG_FILE = "/tmp/was_available.txt"
+
+def read_log():
+    try:
+        with open(LOG_FILE, "r") as f:
+            return f.read().strip() == "true"
+    except:
+        return False
+
+def write_log(value: bool):
+    with open(LOG_FILE, "w") as f:
+        f.write("true" if value else "false")
 
 def send_email(product_url):
     EMAIL_FROM = os.environ.get("EMAIL_FROM")
@@ -33,7 +42,7 @@ def handler():
     r = requests.get(scraper_url)
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # Проверка наличия
+    # Проверка наличия товара
     availability_text = ""
     el = soup.select_one("div.product__header .status")
     if el:
@@ -45,17 +54,15 @@ def handler():
 
     available = any(x in availability_text for x in ["в наличии", "есть", "доступно"])
 
-    # Читаем лог из KV
-    was_available = kv.get("was_available")
-    if was_available is None:
-        was_available = False
+    # Лог в /tmp
+    was_available = read_log()
 
-    # Email только если появился впервые
+    # Email только один раз
     if available and not was_available:
         send_email(product_url)
-        kv.set("was_available", True)
+        write_log(True)
     elif not available and was_available:
-        kv.set("was_available", False)
+        write_log(False)
 
     return {
         "available": available,
